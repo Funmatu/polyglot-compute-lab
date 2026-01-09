@@ -1,4 +1,4 @@
-import initRust, { run_rust_dll } from './pkg/polyglot_compute_lab.js';
+import initRust, { run_rust_dll, run_rust_unsafe, run_rust_bump } from './pkg/polyglot_compute_lab.js';
 
 const ITERATIONS = 100000;
 
@@ -34,6 +34,28 @@ async function main() {
         const sum = run_rust_dll(ITERATIONS);
         const time = performance.now() - start;
         document.getElementById('res-rust').innerText = `${time.toFixed(2)} ms (Sum: ${sum})`;
+    };
+
+    // Rust (Unsafe)
+    document.getElementById('btn-rust-unsafe').onclick = () => {
+        log("Running Rust (Unsafe)...");
+        setTimeout(() => {
+            const start = performance.now();
+            const sum = run_rust_unsafe(ITERATIONS);
+            const time = performance.now() - start;
+            document.getElementById('res-rust-unsafe').innerText = `${time.toFixed(2)} ms (Sum: ${sum})`;
+        }, 10);
+    };
+
+    // Rust (Bump)
+    document.getElementById('btn-rust-bump').onclick = () => {
+        log("Running Rust (Bump)...");
+        setTimeout(() => {
+            const start = performance.now();
+            const sum = run_rust_bump(ITERATIONS);
+            const time = performance.now() - start;
+            document.getElementById('res-rust-bump').innerText = `${time.toFixed(2)} ms (Sum: ${sum})`;
+        }, 10);
     };
 
     document.getElementById('btn-zig').onclick = () => {
