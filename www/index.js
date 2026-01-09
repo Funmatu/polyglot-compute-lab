@@ -1,28 +1,54 @@
-import init, { compute_metrics_js } from './pkg/nx_compute_rs.js';
+import initRust, { run_rust_dll } from './pkg/polyglot_compute_lab.js';
 
-async function run() {
-    await init(); // Initialize WASM
-    
-    const btn = document.getElementById('run-btn');
-    const output = document.getElementById('output');
-    
-    btn.innerText = "Run Core Algorithm (10M iters)";
-    btn.disabled = false;
+const ITERATIONS = 100000;
 
-    btn.addEventListener('click', () => {
-        output.innerText = "Computing...";
-        
-        // Use setTimeout to allow UI to update before blocking main thread
-        setTimeout(() => {
-            const start = performance.now();
-            
-            // Call Rust function
-            const result = compute_metrics_js(10_000_000n, 1.5);
-            
-            const end = performance.now();
-            output.innerText = `Result: ${result.toFixed(6)}\nTime: ${(end - start).toFixed(2)} ms`;
-        }, 10);
-    });
+function log(msg) {
+    document.getElementById('logs').textContent += msg + '\n';
+    console.log(msg);
 }
 
-run();
+async function loadWasm(path) {
+    const response = await fetch(path);
+    const bytes = await response.arrayBuffer();
+    const { instance } = await WebAssembly.instantiate(bytes, {});
+    return instance.exports;
+}
+
+async function main() {
+    log("Loading Modules...");
+    
+    // 1. Load Rust
+    await initRust();
+    
+    // 2. Load Zig
+    const zigExports = await loadWasm('./zig_dll.wasm');
+    
+    // 3. Load WAT
+    const watExports = await loadWasm('./wat_dll.wasm');
+
+    log("All modules loaded. Ready to benchmark.");
+
+    // Setup Handlers
+    document.getElementById('btn-rust').onclick = () => {
+        const start = performance.now();
+        const sum = run_rust_dll(ITERATIONS);
+        const time = performance.now() - start;
+        document.getElementById('res-rust').innerText = `${time.toFixed(2)} ms (Sum: ${sum})`;
+    };
+
+    document.getElementById('btn-zig').onclick = () => {
+        const start = performance.now();
+        const sum = zigExports.run_zig_dll(ITERATIONS);
+        const time = performance.now() - start;
+        document.getElementById('res-zig').innerText = `${time.toFixed(2)} ms (Sum: ${sum})`;
+    };
+
+    document.getElementById('btn-wat').onclick = () => {
+        const start = performance.now();
+        const sum = watExports.run_wat_dll(ITERATIONS);
+        const time = performance.now() - start;
+        document.getElementById('res-wat').innerText = `${time.toFixed(2)} ms (Sum: ${sum})`;
+    };
+}
+
+main();
