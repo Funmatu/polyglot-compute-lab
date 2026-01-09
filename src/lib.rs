@@ -229,6 +229,7 @@ fn polyglot_compute_lab(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_rust_dll_py, m)?)?;
     m.add_function(wrap_pyfunction!(run_rust_unsafe_py, m)?)?;
     m.add_function(wrap_pyfunction!(run_rust_bump_py, m)?)?; 
+    m.add_function(wrap_pyfunction!(run_rust_zipper_py, m)?)?;
     m.add_function(wrap_pyfunction!(run_wgpu_py, m)?)?;
     m.add_function(wrap_pyfunction!(run_wasm_py, m)?)?;
     Ok(())
@@ -331,6 +332,68 @@ pub fn run_rust_bump(iterations: i32) -> i32 {
     dll.sum()
     // Drop不要（オフセットを0に戻すだけで全解放とみなすため）
 }
+
+
+
+// ========================================================
+// Rust (Zipper) Implementation
+// Impl: Two Stacks (Vec) based Cursor
+// ========================================================
+
+struct ZipperList {
+    left: Vec<i32>,  // カーソルより左にある要素（スタック）
+    right: Vec<i32>, // カーソルより右にある要素（スタック）
+}
+
+impl ZipperList {
+    fn new() -> Self {
+        // ベクタの初期容量を確保しておくとさらに速いが、
+        // 今回は公平比較のためデフォルトで。
+        Self {
+            left: Vec::new(),
+            right: Vec::new(),
+        }
+    }
+
+    // 末尾への追加 = カーソルが末尾にある状態での左スタックへのPush
+    fn append(&mut self, value: i32) {
+        self.left.push(value);
+    }
+
+    // カーソルを左へ移動（参考実装：今回は使わないがDLLの機能として）
+    fn move_left(&mut self) {
+        if let Some(val) = self.left.pop() {
+            self.right.push(val);
+        }
+    }
+
+    // カーソルを右へ移動
+    fn move_right(&mut self) {
+        if let Some(val) = self.right.pop() {
+            self.left.push(val);
+        }
+    }
+
+    fn sum(&self) -> i32 {
+        // 2つのベクタの合計を足すだけ
+        // メモリ上で連続しているため、CPUキャッシュが効きまくる
+        let left_sum: i32 = self.left.iter().sum();
+        let right_sum: i32 = self.right.iter().sum();
+        left_sum + right_sum
+    }
+}
+
+#[cfg(feature = "python")]
+#[pyfunction]
+fn run_rust_zipper_py(iterations: i32) -> PyResult<i32> {
+    let mut dll = ZipperList::new();
+    // 実際に大量のメモリ確保が発生する
+    for i in 0..iterations {
+        dll.append(i);
+    }
+    Ok(dll.sum())
+}
+
 
 // ========================================================
 // WGPU (WebGPU) Core Implementation
@@ -545,3 +608,7 @@ fn run_wasm_py(wasm_bytes: &[u8], func_name: &str, iterations: i32) -> PyResult<
 
     Ok(result)
 }
+
+
+
+

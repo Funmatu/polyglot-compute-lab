@@ -94,6 +94,10 @@ def run_rust_bump(iterations):
     return polyglot_compute_lab.run_rust_bump_py(iterations)
 
 
+def run_rust_zipper(iterations):
+    return polyglot_compute_lab.run_rust_zipper_py(iterations)
+
+
 def run_rust_wgpu(iterations):
     return polyglot_compute_lab.run_wgpu_py(iterations)
 
@@ -161,14 +165,17 @@ def main():
     # 5. Rust (Bump)
     results.append(benchmark("Rust (Bump)", run_rust_bump))
 
-    # 6. WGPU (WebGPU)
+    # 6. Rust (Zipper)
+    results.append(benchmark("Rust (Zipper (Safe Rust))", run_rust_zipper))
+
+    # 7. WGPU (WebGPU)
     results.append(benchmark("WGPU (WebGPU)", run_rust_wgpu))
 
-    # 7. Zig (WASM via Rust)
+    # 8. Zig (WASM via Rust)
     if zig_binary:
         results.append(benchmark("Zig (WASM)", run_zig_wasm))
 
-    # 8. WAT (WASM via Rust)
+    # 9. WAT (WASM via Rust)
     if wat_binary:
         results.append(benchmark("WAT (WASM)", run_wat_wasm))
 
