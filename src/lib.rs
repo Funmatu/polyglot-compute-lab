@@ -190,9 +190,47 @@ fn run_rust_dll_py(iterations: i32) -> PyResult<i32> {
 }
 
 #[cfg(feature = "python")]
+#[pyfunction]
+fn run_rust_unsafe_py(iterations: i32) -> PyResult<i32> {
+    let mut dll = UnsafeDll::new();
+    for i in 0..iterations {
+        dll.append(i);
+    }
+    let s = dll.sum();
+    dll.cleanup(); // メモリリーク防止
+    Ok(s)
+}
+
+#[cfg(feature = "python")]
+#[pyfunction]
+fn run_rust_bump_py(iterations: i32) -> PyResult<i32> {
+    let mut dll = BumpDll::new();
+    for i in 0..iterations {
+        dll.append(i);
+    }
+    Ok(dll.sum())
+}
+
+#[cfg(feature = "python")]
+#[pyfunction]
+fn run_wgpu_py(iterations: u32) -> PyResult<f64> {
+    // Native環境では非同期ランタイム(Tokio)を自分で用意して
+    // async関数を同期的にブロック実行する
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let result = rt.block_on(async {
+        run_wgpu_core(iterations).await
+    });
+    Ok(result)
+}
+
+#[cfg(feature = "python")]
 #[pymodule]
 fn polyglot_compute_lab(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_rust_dll_py, m)?)?;
+    m.add_function(wrap_pyfunction!(run_rust_unsafe_py, m)?)?;
+    m.add_function(wrap_pyfunction!(run_rust_bump_py, m)?)?; 
+    m.add_function(wrap_pyfunction!(run_wgpu_py, m)?)?;
+    m.add_function(wrap_pyfunction!(run_wasm_py, m)?)?;
     Ok(())
 }
 
@@ -295,20 +333,20 @@ pub fn run_rust_bump(iterations: i32) -> i32 {
 }
 
 // ========================================================
-// WGPU (WebGPU) Implementation
+// WGPU (WebGPU) Core Implementation
 // Impl: GPU Compute Shader with Atomic Bump Allocator
 // ========================================================
 
-//#[cfg(feature = "wasm")]
-//use wasm_bindgen_futures::spawn_local;
-
-#[cfg(feature = "wasm")]
-#[wasm_bindgen]
-pub async fn run_wgpu_dll(iterations: u32) -> f64 { // Result is passed as f64 for simplicity
-    use wgpu::util::DeviceExt;
-
-    // 1. Initialize WebGPU
+// 共通ロジック: WASM依存もPython依存もしない純粋な非同期関数
+#[cfg(any(feature = "wasm", feature = "python"))]
+async fn run_wgpu_core(iterations: u32) -> f64 {
+    // ------------------------------------------------------------
+    // 1. Initialize WGPU (Adapter & Device)
+    // ------------------------------------------------------------
     let instance = wgpu::Instance::default();
+    
+    // Native(Python)とWebでAdapterの取得戦略が少し違うが、
+    // default() で大抵うまくいく（NativeならVulkan/Metal/DX12が選ばれる）
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions::default())
         .await
@@ -319,7 +357,7 @@ pub async fn run_wgpu_dll(iterations: u32) -> f64 { // Result is passed as f64 f
             &wgpu::DeviceDescriptor {
                 label: None,
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(), // WebGL互換性のため緩く
+                required_limits: wgpu::Limits::downlevel_defaults(),
                 memory_hints: wgpu::MemoryHints::Performance,
             },
             None,
@@ -327,86 +365,28 @@ pub async fn run_wgpu_dll(iterations: u32) -> f64 { // Result is passed as f64 f
         .await
         .expect("Failed to create device");
 
-    // 2. Define WGSL Shader
-    // GPU上で動く「第6の言語」のソースコード
-    let shader_source = format!(r#"
-        struct Node {{
-            value: i32,
-            next: u32, // Pointer (Index)
-            prev: u32, // Pointer (Index)
-            padding: u32, // Alignment
-        }};
-
-        struct Allocator {{
-            counter: atomic<u32>,
-        }};
-
-        struct Result {{
-            sum: i32,
-        }};
-
-        @group(0) @binding(0) var<storage, read_write> heap: array<Node>;
-        @group(0) @binding(1) var<storage, read_write> alloc: Allocator;
-        @group(0) @binding(2) var<storage, read_write> head_tail: array<u32, 2>; // 0:head, 1:tail
-        @group(0) @binding(3) var<storage, read_write> result: Result;
-
-        // GPU Allocator (Atomic Bump)
-        fn alloc_node(val: i32) -> u32 {{
-            // アトミックにインデックスを取得 (ここがポインタ生成)
-            let ptr = atomicAdd(&alloc.counter, 1u);
-            
-            // 初期化
-            heap[ptr].value = val;
-            heap[ptr].next = 0u; // null
-            heap[ptr].prev = 0u; // null
-            return ptr;
-        }}
-
-        @compute @workgroup_size(1)
-        fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {{
-            // シングルスレッドで実行 (Linked Listは直列構造なので)
-            // ※ここを並列化するのがGPUの醍醐味だが、今回はCPUと同じロジックを再現する
-            
-            let iters = {}u; // Rustから注入された定数
-
-            // 1. Append Loop
-            for (var i = 0u; i < iters; i++) {{
-                let val = i32(i);
-                let new_ptr = alloc_node(val);
-                let old_tail = head_tail[1]; // Get current tail
-
-                if (old_tail != 0u) {{
-                    heap[old_tail].next = new_ptr;
-                    heap[new_ptr].prev = old_tail;
-                    head_tail[1] = new_ptr; // Update tail
-                }} else {{
-                    head_tail[0] = new_ptr; // Head
-                    head_tail[1] = new_ptr; // Tail
-                }}
-            }}
-
-            // 2. Traversal Loop (Sum)
-            var current = head_tail[0];
-            var s = 0;
-            
-            // 安全装置: 無限ループ防止のため最大回数を制限
-            for (var k = 0u; k < iters + 10u; k++) {{
-                if (current == 0u) {{ break; }}
-                s += heap[current].value;
-                current = heap[current].next;
-            }}
-            
-            result.sum = s;
-        }}
-    "#, iterations);
+    // ------------------------------------------------------------
+    // 2. WGSL Shader (External File)
+    // ------------------------------------------------------------
+    // コンパイル時にファイルを文字列として読み込む
+    let shader_raw = include_str!("shader.wgsl");
+    // プレースホルダーを実際の数値（文字列）に置換する
+    // 例: "ITERATIONS_PLACEHOLDER" -> "100000u"
+    let shader_source = shader_raw.replace(
+        "ITERATIONS_PLACEHOLDER", 
+        &format!("{}u", iterations)
+    );
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("DLL Shader"),
         source: wgpu::ShaderSource::Wgsl(shader_source.into()),
     });
 
+    // ------------------------------------------------------------
     // 3. Setup Buffers
-    // Node Heap (128MB) - GPUメモリは大きいので豪勢に
+    // ------------------------------------------------------------
+    use wgpu::util::DeviceExt; // for create_buffer_init
+
     let heap_size = 128 * 1024 * 1024; 
     let buffer_heap = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Heap Buffer"),
@@ -415,29 +395,25 @@ pub async fn run_wgpu_dll(iterations: u32) -> f64 { // Result is passed as f64 f
         mapped_at_creation: false,
     });
 
-    // Allocator Counter (Initialize to 1, as 0 is null)
     let buffer_alloc = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Alloc Buffer"),
-        contents: bytemuck::cast_slice(&[1u32]), // Start from index 1
+        contents: bytemuck::cast_slice(&[1u32]),
         usage: wgpu::BufferUsages::STORAGE,
     });
 
-    // Head/Tail [0, 0]
     let buffer_head_tail = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("HeadTail Buffer"),
         contents: bytemuck::cast_slice(&[0u32, 0u32]), 
         usage: wgpu::BufferUsages::STORAGE,
     });
 
-    // Result Buffer (Output)
     let buffer_result = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Result Buffer"),
-        size: 4, // i32
+        size: 4,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
 
-    // Staging Buffer (For reading back to CPU)
     let buffer_staging = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Staging Buffer"),
         size: 4,
@@ -445,14 +421,16 @@ pub async fn run_wgpu_dll(iterations: u32) -> f64 { // Result is passed as f64 f
         mapped_at_creation: false,
     });
 
-    // 4. Pipeline & BindGroup
+    // ------------------------------------------------------------
+    // 4. Pipeline & Execute
+    // ------------------------------------------------------------
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: None,
         entries: &[
-            wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None }, // Heap
-            wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None }, // Alloc
-            wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None }, // HeadTail
-            wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None }, // Result
+            wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+            wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+            wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+            wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None },
         ],
     });
 
@@ -482,28 +460,29 @@ pub async fn run_wgpu_dll(iterations: u32) -> f64 { // Result is passed as f64 f
         ],
     });
 
-    // 5. Execute
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
     {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: None });
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
-        pass.dispatch_workgroups(1, 1, 1); // Single Thread Execution!
+        pass.dispatch_workgroups(1, 1, 1);
     }
     
-    // Copy result to staging
     encoder.copy_buffer_to_buffer(&buffer_result, 0, &buffer_staging, 0, 4);
     queue.submit(Some(encoder.finish()));
 
-    // 6. Read back
+    // ------------------------------------------------------------
+    // 5. Read Back (Async)
+    // ------------------------------------------------------------
     let buffer_slice = buffer_staging.slice(..);
     let (sender, receiver) = futures::channel::oneshot::channel();
+    
     buffer_slice.map_async(wgpu::MapMode::Read, move |result: Result<(), wgpu::BufferAsyncError>| {
         sender.send(result).unwrap();
     });
     
-    device.poll(wgpu::Maintain::Wait); // Wait for GPU
-    
+    device.poll(wgpu::Maintain::Wait);
+
     if let Ok(Ok(())) = receiver.await {
         let data = buffer_slice.get_mapped_range();
         let result: i32 = *bytemuck::from_bytes(&data[..]);
@@ -513,4 +492,56 @@ pub async fn run_wgpu_dll(iterations: u32) -> f64 { // Result is passed as f64 f
     }
 
     return -1.0;
+}
+
+// --------------------------------------------------------
+// WASM Interface (Wrapper for WGPU)
+// --------------------------------------------------------
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+pub async fn run_wgpu_dll(iterations: u32) -> f64 {
+    // WASM環境ではJSのイベントループがよしなにやってくれるので、
+    // 単にasync関数を呼ぶだけでOK
+    run_wgpu_core(iterations).await
+}
+
+
+// ========================================================
+// WASM Runtime (Server-side WASM via Wasmtime)
+// ========================================================
+
+#[cfg(feature = "python")]
+#[pyfunction]
+fn run_wasm_py(wasm_bytes: &[u8], func_name: &str, iterations: i32) -> PyResult<i32> {
+    use wasmtime::*;
+
+    // 1. エンジンの設定 (JITコンパイル有効)
+    let engine = Engine::default();
+
+    // 2. モジュールのコンパイル (バイナリ -> マシンコード)
+    // ※ベンチマークで「実行速度」だけを見たいなら、このコンパイル時間は計測から外すべきだが、
+    // 今回は「ロードして実行」のトータルを見ても面白い。
+    // (Python側でModuleキャッシュする手もあるが、まずは単純に毎回ロードする)
+    let module = Module::new(&engine, wasm_bytes)
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+    // 3. ストア(メモリ空間)の作成
+    let mut store = Store::new(&engine, ());
+
+    // 4. インスタンス化 (Importsが必要ならここで渡す)
+    // 今回のZig/WATはFreestandingでImports不要なので空でOK
+    let instance = Instance::new(&mut store, &module, &[])
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+    // 5. 関数の取得 (型付きで取得して高速化)
+    let run_func = instance
+        .get_typed_func::<i32, i32>(&mut store, func_name)
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Function '{}' not found: {}", func_name, e)))?;
+
+    // 6. 実行
+    let result = run_func
+        .call(&mut store, iterations)
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+    Ok(result)
 }

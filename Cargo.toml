@@ -12,12 +12,14 @@ crate-type = ["cdylib"]
 [features]
 default = ["wasm"]
 wasm = ["dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:wgpu", "dep:bytemuck", "dep:futures"]
-python = ["dep:pyo3"]
+python = ["dep:pyo3", "dep:tokio", "dep:wgpu", "dep:bytemuck", "dep:futures", "dep:wasmtime"]
 
 [dependencies]
 # Common dependencies
 serde = { version = "1.0", features = ["derive"] }
 futures = { version = "0.3", optional = true }
+tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"], optional = true }
+wasmtime = { version = "16.0", optional = true }
 
 # Feature: WebAssembly & WGPU
 wasm-bindgen = { version = "0.2", optional = true }
