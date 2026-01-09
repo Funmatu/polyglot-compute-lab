@@ -1,4 +1,4 @@
-import initRust, { run_rust_dll, run_rust_unsafe, run_rust_bump } from './pkg/polyglot_compute_lab.js';
+import initRust, { run_rust_dll, run_rust_unsafe, run_rust_bump, run_wgpu_dll } from './pkg/polyglot_compute_lab.js';
 
 const ITERATIONS = 100000;
 
@@ -70,6 +70,30 @@ async function main() {
         const sum = watExports.run_wat_dll(ITERATIONS);
         const time = performance.now() - start;
         document.getElementById('res-wat').innerText = `${time.toFixed(2)} ms (Sum: ${sum})`;
+    };
+
+    // WGPU
+    const btnWgpu = document.getElementById('btn-wgpu');
+    // WebGPU非対応ブラウザならボタンを無効化
+    if (!navigator.gpu) {
+        btnWgpu.disabled = true;
+        btnWgpu.innerText = "WebGPU Unsupported";
+    }
+
+    btnWgpu.onclick = async () => {
+        log("Running WGPU (WebGPU)...");
+        document.getElementById('res-wgpu').innerText = "Running (Async)...";
+        
+        try {
+            const start = performance.now();
+            // Rustのasync関数をJSのawaitで待つ
+            const sum = await run_wgpu_dll(ITERATIONS);
+            const time = performance.now() - start;
+            document.getElementById('res-wgpu').innerText = `${time.toFixed(2)} ms (Sum: ${sum})`;
+        } catch (e) {
+            log(`❌ WGPU Error: ${e}`);
+            document.getElementById('res-wgpu').innerText = "Error";
+        }
     };
 }
 

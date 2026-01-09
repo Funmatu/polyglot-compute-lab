@@ -2,6 +2,8 @@
 name = "polyglot-compute-lab"
 version = "0.1.0"
 edition = "2021"
+authors = ["R&D Researcher <funmatu@gmail.com>"]
+description = "A dual-runtime computation core for WebAssembly and Python, powered by Rust."
 
 [lib]
 name = "polyglot_compute_lab"
@@ -9,9 +11,25 @@ crate-type = ["cdylib"]
 
 [features]
 default = ["wasm"]
-wasm = ["dep:wasm-bindgen"]
+wasm = ["dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:wgpu", "dep:bytemuck", "dep:futures"]
 python = ["dep:pyo3"]
 
 [dependencies]
+# Common dependencies
+serde = { version = "1.0", features = ["derive"] }
+futures = { version = "0.3", optional = true }
+
+# Feature: WebAssembly & WGPU
 wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+wgpu = { version = "23", optional = true } # WebGPUのRust wrapper
+bytemuck = { version = "1.14", features = ["derive"], optional = true }
+
+# Feature: Python
 pyo3 = { version = "0.20", features = ["extension-module"], optional = true }
+rayon = "1.10"
+
+[profile.release]
+lto = true
+opt-level = 3
+codegen-units = 1
