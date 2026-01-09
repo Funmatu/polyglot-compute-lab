@@ -49,6 +49,52 @@ impl DoublyLinkedList {
         }
         sum
     }
+
+    fn insert(&mut self, index: usize, value: i32) {
+        // 先頭への挿入
+        if index == 0 {
+            let new_node = Rc::new(RefCell::new(Node {
+                value,
+                next: self.head.clone(),
+                prev: None,
+            }));
+            if let Some(old_head) = &self.head {
+                old_head.borrow_mut().prev = Some(Rc::downgrade(&new_node));
+            } else {
+                self.tail = Some(new_node.clone());
+            }
+            self.head = Some(new_node);
+            return;
+        }
+
+        // 挿入位置を探す (O(N) traversal)
+        let mut current = self.head.clone();
+        let mut current_idx = 0;
+        
+        while let Some(node) = current {
+            if current_idx == index {
+                // nodeの手前に挿入する
+                let prev_node = node.borrow().prev.clone().and_then(|w| w.upgrade());
+                let new_node = Rc::new(RefCell::new(Node {
+                    value,
+                    next: Some(node.clone()),
+                    prev: prev_node.clone().map(|r| Rc::downgrade(&r)),
+                }));
+
+                node.borrow_mut().prev = Some(Rc::downgrade(&new_node));
+                
+                if let Some(prev) = prev_node {
+                    prev.borrow_mut().next = Some(new_node);
+                }
+                return;
+            }
+            current = node.borrow().next.clone();
+            current_idx += 1;
+        }
+        
+        // インデックスが範囲外(末尾)ならappend
+        self.append(value);
+    }
 }
 
 impl Drop for DoublyLinkedList {
@@ -135,6 +181,53 @@ impl UnsafeDll {
                 let _ = Box::from_raw(current);
                 current = next;
             }
+        }
+    }
+
+    fn insert(&mut self, index: usize, value: i32) {
+        unsafe {
+            let new_node = Box::into_raw(Box::new(UnsafeNode {
+                value,
+                next: std::ptr::null_mut(),
+                prev: std::ptr::null_mut(),
+            }));
+
+            if index == 0 {
+                if !self.head.is_null() {
+                    (*self.head).prev = new_node;
+                    (*new_node).next = self.head;
+                } else {
+                    self.tail = new_node;
+                }
+                self.head = new_node;
+                return;
+            }
+
+            let mut current = self.head;
+            let mut i = 0;
+            while !current.is_null() {
+                if i == index {
+                    // currentの手前に挿入
+                    let prev = (*current).prev;
+                    (*current).prev = new_node;
+                    (*new_node).next = current;
+                    (*new_node).prev = prev;
+                    if !prev.is_null() {
+                        (*prev).next = new_node;
+                    }
+                    return;
+                }
+                current = (*current).next;
+                i += 1;
+            }
+            
+            // 末尾
+            self.append(value);
+            // ※Box::into_rawしたポインタの解放はappend内のロジックにはないので、
+            // cleanup時またはここで適切に処理しないとリークするが、appendの実装に委ねる
+            // (今回は既存のappendを呼ぶ形にしたので、上で作ったnew_nodeが無駄になるバグがあるが
+            //  ベンチマーク用簡易実装として、ここは append(value) して new_node を消す形にする)
+            let _ = Box::from_raw(new_node); 
         }
     }
 }
@@ -227,9 +320,13 @@ fn run_wgpu_py(iterations: u32) -> PyResult<f64> {
 #[pymodule]
 fn polyglot_compute_lab(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_rust_dll_py, m)?)?;
+    m.add_function(wrap_pyfunction!(run_rust_safe_insert_py, m)?)?;
     m.add_function(wrap_pyfunction!(run_rust_unsafe_py, m)?)?;
+    m.add_function(wrap_pyfunction!(run_rust_unsafe_insert_py, m)?)?;
     m.add_function(wrap_pyfunction!(run_rust_bump_py, m)?)?; 
+    m.add_function(wrap_pyfunction!(run_rust_bump_insert_py, m)?)?;
     m.add_function(wrap_pyfunction!(run_rust_zipper_py, m)?)?;
+    m.add_function(wrap_pyfunction!(run_rust_zipper_insert_py, m)?)?;
     m.add_function(wrap_pyfunction!(run_wgpu_py, m)?)?;
     m.add_function(wrap_pyfunction!(run_wasm_py, m)?)?;
     Ok(())
@@ -319,6 +416,55 @@ impl BumpDll {
             s
         }
     }
+
+    fn insert(&mut self, index: usize, value: i32) {
+        unsafe {
+            // ここが重要: Box::new ではなく、Bumpアロケータからメモリをもらう
+            let new_node = Self::alloc_node(value);
+
+            if index == 0 {
+                if !self.head.is_null() {
+                    (*self.head).prev = new_node;
+                    (*new_node).next = self.head;
+                } else {
+                    self.tail = new_node;
+                }
+                self.head = new_node;
+                return;
+            }
+
+            let mut current = self.head;
+            let mut i = 0;
+            
+            // 挿入位置までトラバーサル
+            while !current.is_null() {
+                if i == index {
+                    // currentの手前に挿入
+                    let prev = (*current).prev;
+                    (*current).prev = new_node;
+                    (*new_node).next = current;
+                    (*new_node).prev = prev;
+                    if !prev.is_null() {
+                        (*prev).next = new_node;
+                    }
+                    return;
+                }
+                current = (*current).next;
+                i += 1;
+            }
+            
+            // インデックスが範囲外なら末尾に追加
+            // appendを再利用するが、append内で再度alloc_nodeしないように注意が必要。
+            // しかし既存のappendはalloc_nodeを呼んでしまう仕様なので、
+            // ここでは簡易的に「ポインタ繋ぎ変え」をベタ書きするか、
+            // new_nodeを破棄してappendを呼ぶ（Bumpなので破棄＝何もしないでOK）。
+            
+            // Bumpアロケータは「解放」がないので、作ったnew_nodeを放置して
+            // append(value) を呼んでもメモリリーク（無駄使い）するだけでクラッシュはしない。
+            // ベンチマークの厳密性のために、ここではappendを呼んでリターンする。
+            self.append(value);
+        }
+    }
 }
 
 // Export
@@ -331,6 +477,25 @@ pub fn run_rust_bump(iterations: i32) -> i32 {
     }
     dll.sum()
     // Drop不要（オフセットを0に戻すだけで全解放とみなすため）
+}
+
+#[cfg(feature = "python")]
+#[pyfunction]
+fn run_rust_bump_insert_py(iterations: i32) -> PyResult<()> {
+    // 毎回ヒープをリセット
+    let mut dll = BumpDll::new();
+    let mut seed: usize = 123456789;
+    let mut len = 0;
+    
+    for i in 0..iterations {
+        let pos = if len == 0 { 0 } else { seed % len };
+        dll.insert(pos, i);
+        
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+        len += 1;
+    }
+    // Bumpなのでcleanup不要
+    Ok(())
 }
 
 
@@ -381,6 +546,29 @@ impl ZipperList {
         let right_sum: i32 = self.right.iter().sum();
         left_sum + right_sum
     }
+
+    fn insert(&mut self, index: usize, value: i32) {
+        let current_pos = self.left.len();
+
+        if index < current_pos {
+            // 左にある -> まとめて右へ移動
+            let _diff = current_pos - index;
+            // 1つずつpop/pushせず、drainで一気に移動させる
+            // (右スタックは逆順になる仕様なので、rev()等考慮が必要だが、
+            //  単純な2つのスタックとして扱うなら drain して append が最速)
+            let moved: Vec<i32> = self.left.drain(index..).rev().collect();
+            self.right.extend(moved);
+        } else if index > current_pos {
+            // 右にある -> まとめて左へ移動
+            let _diff = index - current_pos;
+            // 右スタックの末尾(=カーソル直近)から取り出して左へ
+            let len = self.right.len();
+            let start = len.saturating_sub(_diff);
+            let moved: Vec<i32> = self.right.drain(start..).rev().collect();
+            self.left.extend(moved);
+        }
+        self.left.push(value);
+    }
 }
 
 #[cfg(feature = "python")]
@@ -392,6 +580,64 @@ fn run_rust_zipper_py(iterations: i32) -> PyResult<i32> {
         dll.append(i);
     }
     Ok(dll.sum())
+}
+
+
+#[cfg(feature = "python")]
+#[pyfunction]
+fn run_rust_safe_insert_py(iterations: i32) -> PyResult<()> {
+    // 挿入テストは時間がかかるので回数を減らすことを推奨するが、引数に従う
+    // 乱数はRust側で簡易生成するか、Pythonからリストをもらうのが公平だが、
+    // ここでは簡易的に「毎回ランダム」ではなく「中央付近への挿入」などで負荷をかける
+    // 厳密なランダムアクセスはPython側で制御したほうが公平なため、
+    // ここでは「Pythonから位置と値のリストを受け取る」形がベストだが、
+    // 実装が複雑になるため、「疑似ランダム（線形合同法）」でRust内で完結させる。
+    
+    let mut dll = DoublyLinkedList::new();
+    let mut seed: usize = 123456789;
+    let mut len = 0;
+    
+    for i in 0..iterations {
+        // 簡易乱数: 0..len の間のどこか
+        let pos = if len == 0 { 0 } else { seed % len };
+        dll.insert(pos, i);
+        
+        // 次の乱数
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+        len += 1;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "python")]
+#[pyfunction]
+fn run_rust_unsafe_insert_py(iterations: i32) -> PyResult<()> {
+    let mut dll = UnsafeDll::new();
+    let mut seed: usize = 123456789;
+    let mut len = 0;
+    for i in 0..iterations {
+        let pos = if len == 0 { 0 } else { seed % len };
+        dll.insert(pos, i);
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+        len += 1;
+    }
+    dll.cleanup();
+    Ok(())
+}
+
+#[cfg(feature = "python")]
+#[pyfunction]
+fn run_rust_zipper_insert_py(iterations: i32) -> PyResult<()> {
+    let mut dll = ZipperList::new();
+    let mut seed: usize = 123456789;
+    let mut len = 0;
+    for i in 0..iterations {
+        let pos = if len == 0 { 0 } else { seed % len };
+        dll.insert(pos, i);
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+        len += 1;
+    }
+    Ok(())
 }
 
 
@@ -608,7 +854,3 @@ fn run_wasm_py(wasm_bytes: &[u8], func_name: &str, iterations: i32) -> PyResult<
 
     Ok(result)
 }
-
-
-
-

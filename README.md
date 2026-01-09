@@ -37,3 +37,42 @@ maturin develop --release --features python
 python python/benchmark.py
 
 ```
+
+# Result
+
+## Sum
+```
+$ python python/benchmark.py
+--- Polyglot Benchmark (N=100,000, Repeat=10) ---
+Running benchmarks...
+
+Implementation            | Time (avg)   | Speedup (vs Py Class) 
+-----------------------------------------------------------------
+🛡️ Rust (Zipper (Safe Rust)) |    0.08 ms |            251.04x
+🚀 Rust (Bump)             |    0.36 ms |             57.29x
+📦 Zig (WASM)              |    1.04 ms |             19.67x
+⚡ Rust (Unsafe)           |    1.33 ms |             15.33x
+📦 WAT (WASM)              |    1.46 ms |             14.01x
+🛡️ Rust (Safe)             |    2.81 ms |              7.28x
+🐍 Python (deque)          |    3.18 ms |              6.42x
+🐌 Python (Pure Class)     |   20.42 ms |              1.00x
+🎮 WGPU (WebGPU)           |  314.98 ms |              0.06x
+-----------------------------------------------------------------
+```
+
+## Random Insert
+```
+$ python python/benchmark2.py
+--- Random Insertion Benchmark (N=30,000, Repeat=5) ---
+Note: Simulating O(N) random insertions.
+------------------------------------------------------------
+Implementation       | Time (avg) | vs Py List
+------------------------------------------------------------
+Rust (Zipper)        |    26.39 ms |     1.52x
+Python (list)        |    40.20 ms |     1.00x
+Python (deque)       |    59.61 ms |     0.67x
+Rust (Bump DLL)      |  1600.77 ms |     0.03x
+Rust (Unsafe DLL)    |  2083.14 ms |     0.02x
+Rust (Safe DLL)      |  2685.62 ms |     0.01x
+------------------------------------------------------------
+```
