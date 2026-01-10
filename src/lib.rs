@@ -327,6 +327,7 @@ fn polyglot_compute_lab(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_rust_bump_insert_py, m)?)?;
     m.add_function(wrap_pyfunction!(run_rust_zipper_py, m)?)?;
     m.add_function(wrap_pyfunction!(run_rust_zipper_insert_py, m)?)?;
+    m.add_function(wrap_pyfunction!(run_rust_unsafe_zipper_insert_py, m)?)?;
     m.add_function(wrap_pyfunction!(run_wgpu_py, m)?)?;
     m.add_function(wrap_pyfunction!(run_wasm_py, m)?)?;
     Ok(())
@@ -511,12 +512,10 @@ struct ZipperList {
 }
 
 impl ZipperList {
-    fn new() -> Self {
-        // ベクタの初期容量を確保しておくとさらに速いが、
-        // 今回は公平比較のためデフォルトで。
+    fn new(capacity: usize) -> Self {
         Self {
-            left: Vec::new(),
-            right: Vec::new(),
+            left: Vec::with_capacity(capacity),
+            right: Vec::with_capacity(capacity),
         }
     }
 
@@ -574,7 +573,7 @@ impl ZipperList {
 #[cfg(feature = "python")]
 #[pyfunction]
 fn run_rust_zipper_py(iterations: i32) -> PyResult<i32> {
-    let mut dll = ZipperList::new();
+    let mut dll = ZipperList::new(iterations as usize);
     // 実際に大量のメモリ確保が発生する
     for i in 0..iterations {
         dll.append(i);
@@ -628,7 +627,93 @@ fn run_rust_unsafe_insert_py(iterations: i32) -> PyResult<()> {
 #[cfg(feature = "python")]
 #[pyfunction]
 fn run_rust_zipper_insert_py(iterations: i32) -> PyResult<()> {
-    let mut dll = ZipperList::new();
+    let mut dll = ZipperList::new(iterations as usize);
+    let mut seed: usize = 123456789;
+    let mut len = 0;
+    for i in 0..iterations {
+        let pos = if len == 0 { 0 } else { seed % len };
+        dll.insert(pos, i);
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+        len += 1;
+    }
+    Ok(())
+}
+
+
+// ========================================================
+// Rust (Unsafe Zipper) Implementation
+// Impl: Unsafe Vec ops mimicking Zig's manual memory move
+// ========================================================
+
+struct UnsafeZipperList {
+    left: Vec<i32>,
+    right: Vec<i32>,
+}
+
+impl UnsafeZipperList {
+    fn new(capacity: usize) -> Self {
+        Self {
+            left: Vec::with_capacity(capacity),
+            right: Vec::with_capacity(capacity),
+        }
+    }
+
+    #[inline(always)]
+    fn insert(&mut self, index: usize, value: i32) {
+        unsafe {
+            let left_len = self.left.len();
+            if index < left_len {
+                // --- Move from Left to Right ---
+                let count = left_len - index;
+                
+                // ポインタ取得
+                let left_ptr = self.left.as_ptr().add(index);
+                let right_ptr = self.right.as_mut_ptr().add(self.right.len());
+                
+                // 【修正】Write Forward (順方向書き込み) に変更
+                // 左スタックの末尾(top)から順に、右スタックの末尾(new top)へ書き込む
+                for i in 0..count {
+                    // Right(Dest): 前から順に書き込む (Cache Friendly!)
+                    // Left(Src)  : 後ろから順に読む
+                    *right_ptr.add(i) = *left_ptr.add(count - 1 - i);
+                }
+                
+                self.right.set_len(self.right.len() + count);
+                self.left.set_len(index);
+
+            } else if index > left_len {
+                // --- Move from Right to Left ---
+                let count = index - left_len;
+                let right_len = self.right.len();
+                let move_count = if count > right_len { right_len } else { count };
+                
+                let start_index = right_len - move_count;
+                let right_ptr = self.right.as_ptr().add(start_index);
+                let left_ptr = self.left.as_mut_ptr().add(self.left.len());
+                
+                // 【修正】Write Forward (順方向書き込み) に変更
+                for i in 0..move_count {
+                     // Left(Dest): 前から順に書き込む
+                     // Right(Src): 後ろから順に読む
+                     *left_ptr.add(i) = *right_ptr.add(move_count - 1 - i);
+                }
+                
+                self.left.set_len(self.left.len() + move_count);
+                self.right.set_len(start_index);
+            }
+            
+            // Push
+            // Pre-allocation済みなのでreserveチェックなしで書くことも可能だが
+            // pushの実装は十分に速いのでこのまま
+            self.left.push(value);
+        }
+    }
+}
+
+#[cfg(feature = "python")]
+#[pyfunction]
+fn run_rust_unsafe_zipper_insert_py(iterations: i32) -> PyResult<()> {
+    let mut dll = UnsafeZipperList::new(iterations as usize);
     let mut seed: usize = 123456789;
     let mut len = 0;
     for i in 0..iterations {

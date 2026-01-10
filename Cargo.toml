@@ -32,6 +32,11 @@ pyo3 = { version = "0.20", features = ["extension-module"], optional = true }
 rayon = "1.10"
 
 [profile.release]
-lto = true
-opt-level = 3
-codegen-units = 1
+lto = "fat"          # Link Time Optimization: 全体を解析して関数インライン化を極限まで行う
+codegen-units = 1    # 並列ビルドを無効化し、単一ユニットとして最適化の質を高める
+panic = "abort"      # パニック時の巻き戻し処理（Unwind）を削除し、コードを軽量・高速化する (公平に比較したいのでZigやC言語に近い挙動を期待)
+opt-level = 3        # 最適化レベル最大（デフォルトですが明示）
+strip = true         # デバッグ情報を削除してバイナリを軽量化（キャッシュ効率向上）
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
