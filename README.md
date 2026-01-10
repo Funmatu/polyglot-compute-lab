@@ -63,16 +63,20 @@ Implementation            | Time (avg)   | Speedup (vs Py Class)
 ## Random Insert
 ```
 $ python python/benchmark2.py
+Loaded ./zig_zipper.so
 --- Random Insertion Benchmark (N=30,000, Repeat=5) ---
 Note: Simulating O(N) random insertions.
 ------------------------------------------------------------
 Implementation       | Time (avg) | vs Py List
 ------------------------------------------------------------
-Rust (Zipper)        |    26.39 ms |     1.52x
-Python (list)        |    40.20 ms |     1.00x
-Python (deque)       |    59.61 ms |     0.67x
-Rust (Bump DLL)      |  1600.77 ms |     0.03x
-Rust (Unsafe DLL)    |  2083.14 ms |     0.02x
-Rust (Safe DLL)      |  2685.62 ms |     0.01x
+Rust (Unsafe-Zipper) |    10.09 ms |     4.09x
+Zig (Zipper-Native)  |    10.59 ms |     3.90x
+Rust (Safe-Zipper)   |    18.91 ms |     2.18x
+Python (list)        |    41.28 ms |     1.00x
+Zig (Zipper-WASM)    |    48.32 ms |     0.85x
+Python (deque)       |    58.84 ms |     0.70x
+Rust (Unsafe-Bump)   |  1524.71 ms |     0.03x
+Rust (Unsafe)        |  1960.06 ms |     0.02x
+Rust (Safe)          |  2555.37 ms |     0.02x
 ------------------------------------------------------------
 ```

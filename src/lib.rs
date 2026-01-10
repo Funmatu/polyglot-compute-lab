@@ -555,8 +555,9 @@ impl ZipperList {
             // 1つずつpop/pushせず、drainで一気に移動させる
             // (右スタックは逆順になる仕様なので、rev()等考慮が必要だが、
             //  単純な2つのスタックとして扱うなら drain して append が最速)
-            let moved: Vec<i32> = self.left.drain(index..).rev().collect();
-            self.right.extend(moved);
+            // let moved: Vec<i32> = self.left.drain(index..).rev().collect();
+            // self.right.extend(moved);
+            self.right.extend(self.left.drain(index..).rev());
         } else if index > current_pos {
             // 右にある -> まとめて左へ移動
             let _diff = index - current_pos;
