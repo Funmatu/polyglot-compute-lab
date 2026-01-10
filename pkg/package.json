@@ -1,0 +1,19 @@
+{
+  "name": "polyglot-compute-lab",
+  "type": "module",
+  "collaborators": [
+    "R&D Researcher <funmatu@gmail.com>"
+  ],
+  "description": "A dual-runtime computation core for WebAssembly and Python, powered by Rust.",
+  "version": "0.1.0",
+  "files": [
+    "polyglot_compute_lab_bg.wasm",
+    "polyglot_compute_lab.js",
+    "polyglot_compute_lab.d.ts"
+  ],
+  "main": "polyglot_compute_lab.js",
+  "types": "polyglot_compute_lab.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

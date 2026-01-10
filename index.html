@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Polyglot Benchmark: DLL</title>
+    <style>
+        body { font-family: sans-serif; max-width: 800px; margin: 2rem auto; }
+        .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+        .card { border: 1px solid #ccc; padding: 1rem; border-radius: 8px; }
+        button { width: 100%; padding: 0.5rem; margin-top: 0.5rem; cursor: pointer; }
+        pre { background: #f4f4f4; padding: 0.5rem; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>Polyglot Benchmark: Doubly Linked List</h1>
+    <p>Comparison of Linked List creation & traversal (N=100,000).</p>
+
+    <div class="grid">
+        <div class="card">
+            <h3>Rust (Safe)</h3>
+            <p>Impl: <code>Rc&lt;RefCell&gt;</code></p>
+            <button id="btn-rust">Run Rust</button>
+            <div id="res-rust">Ready</div>
+        </div>
+
+        <div class="card" style="border-color: #e74c3c;">
+            <h3 style="color: #c0392b;">Rust (Unsafe)</h3>
+            <p>Impl: <code>*mut T</code> (Raw Ptr)</p>
+            <button id="btn-rust-unsafe">Run Unsafe</button>
+            <div id="res-rust-unsafe">Ready</div>
+        </div>
+
+        <div class="card" style="border-color: #8e44ad;">
+            <h3 style="color: #8e44ad;">Rust (Bump)</h3>
+            <p>Impl: Manual Allocator</p>
+            <button id="btn-rust-bump">Run Bump</button>
+            <div id="res-rust-bump">Ready</div>
+        </div>
+
+        <div class="card">
+            <h3>Zig</h3>
+            <p>Impl: Manual Allocator</p>
+            <button id="btn-zig">Run Zig</button>
+            <div id="res-zig">Ready</div>
+        </div>
+
+        <div class="card">
+            <h3>Assembly (WAT)</h3>
+            <p>Impl: Raw Pointers</p>
+            <button id="btn-wat">Run WAT</button>
+            <div id="res-wat">Ready</div>
+        </div>
+
+        <div class="card" style="border-color: #00f2ff;">
+            <h3 style="color: #007780;">WGPU (WebGPU)</h3>
+            <p>Impl: Compute Shader</p>
+            <button id="btn-wgpu">Run WGPU</button>
+            <div id="res-wgpu">Ready</div>
+        </div>
+    </div>
+    
+    <h3>Logs</h3>
+    <pre id="logs"></pre>
+
+    <script type="module" src="./index.js"></script>
+</body>
+</html>
